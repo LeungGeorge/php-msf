@@ -1,37 +1,39 @@
 <?php
 /**
- * 异步协程sleep
- * 类似sleep，但是异步非阻塞
+ * 异步协程shell_exec
+ * 异步执行Shell命令。相当于shell_exec函数，执行后底层会fork一个子进程，并执行对应的command命令
+ * 在Swoole1.9.22或更高版本可用
+ * fork创建子进程的操作代价是非常昂贵的，系统无法支撑过大的并发量
+ *
  * @author camera360_server@camera360.com
  * @copyright Chengdu pinguo Technology Co.,Ltd.
  */
 
 namespace PG\MSF\Coroutine;
 
-class Sleep extends Base
+class Shell extends Base
 {
     /**
-     * sleep的时间
+     * shell 指令
      * @var int
      */
-    public $__sleepTime;
+    public $__command;
 
     /**
-     * @param int $mSec 时间，单位为毫秒
+     * @param string $command shell命令
      * @return $this
      */
-    public function goSleep(int $mSec)
+    public function goExec(string $command)
     {
-        $this->__sleepTime = $mSec;
+        $this->__command   = $command;
         $this->requestId   = $this->getContext()->getRequestId();
         $requestId         = $this->requestId;
-        $this->setTimeout($mSec + 1000); //协程超时时间要比睡眠时间更长
 
         getInstance()->scheduler->IOCallBack[$this->requestId][] = $this;
         $keys = array_keys(getInstance()->scheduler->IOCallBack[$this->requestId]);
         $this->ioBackKey = array_pop($keys);
 
-        $this->send(function () use ($requestId) {
+        $this->send(function ($result, $status) use ($requestId) {
             if (empty($this->getContext()) || ($requestId != $this->getContext()->getRequestId())) {
                 return;
             }
@@ -40,7 +42,7 @@ class Sleep extends Base
                 return;
             }
 
-            $this->result = true;
+            $this->result = $status === false ? false : $result;
             $this->ioBack = true;
             $this->nextRun();
         });
@@ -49,13 +51,17 @@ class Sleep extends Base
     }
 
     /**
-     * 通过定时器来模拟异步IO
-     * @param callable $callback 定时器回调函数
+     * 异步执行shell，并执行回调
+     * @param callable $callback 回调函数
      * @return $this
+     * @throws Exception
      */
     public function send($callback)
     {
-        swoole_timer_after($this->__sleepTime, $callback);
+        if (version_compare(SWOOLE_VERSION, '1.9.22', '<')) {
+            throw new Exception('Swoole version must >= 1.9.22');
+        }
+        \Swoole\Async::exec($this->__command, $callback);
         return $this;
     }
 }

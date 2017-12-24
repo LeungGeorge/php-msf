@@ -113,7 +113,9 @@ class Controller extends Core
                 $ce     = $e;
             }
             $this->getContext()->getLog()->error($errMsg);
-            $this->output('Internal Server Error', 500);
+            if ($this->getContext()->getOutput()) {
+                $this->output('Internal Server Error', 500);
+            }
         } catch (\Throwable $ne) {
             getInstance()->log->error('previous exception ' . dump($ce, false, true));
             getInstance()->log->error('handle exception ' . dump($ne, false, true));
@@ -134,7 +136,7 @@ class Controller extends Core
                 unset($this->objectPoolBuckets[$k]);
             }
             $this->resetProperties();
-            $this->__isContruct = false;
+            $this->__isConstruct = false;
             getInstance()->objectPool->push($this);
             parent::destroy();
         }

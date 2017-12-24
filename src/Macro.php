@@ -9,10 +9,14 @@
 namespace PG\MSF;
 
 /**
- * Class Marco
+ * Class Macro
  * @package PG\MSF
  */
-class Marco
+
+//修复单词错误，但是要兼容错误的单词
+class_alias(__NAMESPACE__ . '\\Macro', __NAMESPACE__ . '\\Marco');
+
+class Macro
 {
     /**
      * 分布式模式
@@ -157,4 +161,27 @@ class Marco
      * 发送静态文件403
      */
     const SEND_FILE_403                             = 403;
+
+    /**
+     * Timer TICK
+     */
+    const SWOOLE_TIMER_TICK                          = 'swoole_timer_tick';
+
+    /**
+     * Timer AFTER
+     */
+    const SWOOLE_TIMER_AFTER                         = 'swoole_timer_after';
+
+    /**
+     * 文件Session
+     */
+    const SESSION_FILE                               = 1;
+    /**
+     * redis Session
+     */
+    const SESSION_REDIS                              = 2;
+    /**
+     * redis proxy Session
+     */
+    const SESSION_REDIS_PROXY                        = 3;
 }

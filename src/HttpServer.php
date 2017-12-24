@@ -41,16 +41,34 @@ abstract class HttpServer extends Server
     public $templateEngine;
 
     /**
+     * 视图文件存储路径,您可以指定多个路径以便让框架载入.
+     * 数组顺序即加载顺序,当然,框架会自动将msf视图目录放在最后resolve.
+     *
+     * @var array
+     */
+    public $viewResolvePaths;
+
+    /**
      * HttpServer constructor.
      */
     public function __construct()
     {
         parent::__construct();
-        $view_dir = APP_DIR . '/Views';
-        if (!is_dir($view_dir)) {
-            writeln('App directory does not exist Views directory, please create.');
-            exit();
-        }
+        $this->initViewResolvePaths();
+    }
+
+    /**
+     * 初始化需要检索的视图目录,请在配置中指定http_server.view_paths数组.
+     * 如果未指定,系统默认会尝试加载app/Views目录,任何时候,框架都会加载$MSFSrcDir/Views下的视图.
+     */
+    protected function initViewResolvePaths()
+    {
+        $this->viewResolvePaths = $this->config->get('http_server.view_paths', [
+            APP_DIR.'/Views'
+        ]);
+
+        // 框架自带的视图目录.
+        $this->viewResolvePaths[] = $this->MSFSrcDir.'/Views';
     }
 
     /**
@@ -84,7 +102,8 @@ abstract class HttpServer extends Server
             $this->onWorkerStart(null, null);
         } else {
             //开启一个http服务器
-            $this->server = new \swoole_http_server($this->httpSocketName, $this->httpPort);
+            $mode = $this->config->get('server.mode', SWOOLE_PROCESS);
+            $this->server = new \swoole_http_server($this->httpSocketName, $this->httpPort, $mode);
             $this->server->on('Start', [$this, 'onStart']);
             $this->server->on('WorkerStart', [$this, 'onWorkerStart']);
             $this->server->on('WorkerStop', [$this, 'onWorkerStop']);
@@ -95,6 +114,7 @@ abstract class HttpServer extends Server
             $this->server->on('ManagerStart', [$this, 'onManagerStart']);
             $this->server->on('ManagerStop', [$this, 'onManagerStop']);
             $this->server->on('request', [$this, 'onRequest']);
+            $this->server->on('Shutdown', [$this, 'onShutdown']);
             $set = $this->setServerSet();
             $set['daemonize'] = self::$daemonize ? 1 : 0;
             $this->server->set($set);
@@ -156,7 +176,7 @@ abstract class HttpServer extends Server
 
         do {
             if ($this->route->getPath() == '') {
-                $indexFile = $this->config['http']['domain'][$this->route->getHost()]['index'] ?? null;
+                $indexFile = $this->route->domainRoot[$this->route->getHost()]['index'] ?? null;
                 $response->header('X-Ngx-LogId', $PGLog->logId);
                 $httpCode  = $this->sendFile($indexFile, $request, $response);
                 $PGLog->pushLog('http-code', $httpCode);
@@ -180,7 +200,7 @@ abstract class HttpServer extends Server
                 break;
             }
 
-            $methodPrefix = $this->config->get('http.method_prefix', 'action');
+            $methodPrefix = $this->route->methodPrefix;
             $methodName   = $methodPrefix . $this->route->getMethodName();
 
             try {
@@ -223,7 +243,7 @@ abstract class HttpServer extends Server
                 $instance->context->setOutput($output);
                 $instance->context->setControllerName($controllerName);
                 $instance->context->setActionName($methodName);
-                $instance->setRequestType(Marco::HTTP_REQUEST);
+                $instance->setRequestType(Macro::HTTP_REQUEST);
                 $init = $instance->__construct($controllerName, $methodName);
 
                 if ($init instanceof \Generator) {
@@ -231,26 +251,33 @@ abstract class HttpServer extends Server
                         $init,
                         $instance,
                         function () use ($instance, $methodName) {
-                            if ($instance->getContext()->getOutput()->__isEnd) {
-                                $instance->destroy();
-                                return false;
-                            }
+                            try {
+                                if ($instance->getContext()->getOutput()->__isEnd) {
+                                    $instance->destroy();
+                                    return false;
+                                }
 
-                            $generator = $instance->$methodName(...array_values($this->route->getParams()));
-                            if ($generator instanceof \Generator) {
-                                $this->scheduler->taskMap[$instance->context->getRequestId()]->resetRoutine($generator);
-                                $this->scheduler->schedule(
-                                    $this->scheduler->taskMap[$instance->context->getRequestId()],
-                                    function () use ($instance) {
-                                        if (!$instance->getContext()->getOutput()->__isEnd) {
-                                            $instance->getContext()->getOutput()->output('Not Implemented', 501);
+                                $generator = $instance->$methodName(...array_values($this->route->getParams()));
+                                if ($generator instanceof \Generator) {
+                                    $this->scheduler->taskMap[$instance->context->getRequestId()]->resetRoutine($generator);
+                                    $this->scheduler->schedule(
+                                        $this->scheduler->taskMap[$instance->context->getRequestId()],
+                                        function () use ($instance) {
+                                            if (!$instance->getContext()->getOutput()->__isEnd) {
+                                                $instance->getContext()->getOutput()->output('Not Implemented', 501);
+                                            }
+                                            $instance->destroy();
                                         }
-                                        $instance->destroy();
+                                    );
+                                } else {
+                                    if (!$instance->getContext()->getOutput()->__isEnd) {
+                                        $instance->getContext()->getOutput()->output('Not Implemented', 501);
                                     }
-                                );
-                            } else {
+                                    $instance->destroy();
+                                }
+                            } catch (\Throwable $e) {
                                 if (!$instance->getContext()->getOutput()->__isEnd) {
-                                    $instance->getContext()->getOutput()->output('Not Implemented', 501);
+                                    $instance->onExceptionHandle($e);
                                 }
                                 $instance->destroy();
                             }
@@ -311,10 +338,10 @@ abstract class HttpServer extends Server
     public static function getRemoteAddr($request)
     {
         $ip = $request->header['x-forwarded-for']       ??
-              $request->header['http_x_forwarded_for']  ??
-              $request->header['http_forwarded']        ??
-              $request->header['http_forwarded_for']    ??
-              '';
+            $request->header['http_x_forwarded_for']    ??
+            $request->header['http_forwarded']          ??
+            $request->header['http_forwarded_for']      ??
+            '';
 
         if ($ip) {
             $ip = explode(',', $ip);
@@ -323,10 +350,10 @@ abstract class HttpServer extends Server
         }
 
         $ip = $request->header['http_client_ip']        ??
-              $request->header['x-real-ip']             ??
-              $request->header['remote_addr']           ??
-              $request->server['remote_addr']           ??
-              '';
+            $request->header['x-real-ip']               ??
+            $request->header['remote_addr']             ??
+            $request->server['remote_addr']             ??
+            '';
 
         return $ip;
     }
@@ -375,7 +402,7 @@ abstract class HttpServer extends Server
                 });
             }
 
-            return Marco::SEND_FILE_200;
+            return Macro::SEND_FILE_200;
         }
 
         $path = realpath(urldecode($path));
@@ -385,14 +412,14 @@ abstract class HttpServer extends Server
         if (!file_exists($path)) {
             $response->status(404);
             $response->end('');
-            return Marco::SEND_FILE_404;
+            return Macro::SEND_FILE_404;
         }
 
         // 判断文件是否有权限（非root目录不能访问）
         if (empty($root) || strpos($path, $root) === false) {
             $response->status(403);
             $response->end('');
-            return Marco::SEND_FILE_403;
+            return Macro::SEND_FILE_403;
         }
 
         $info      = pathinfo($path);
@@ -403,7 +430,7 @@ abstract class HttpServer extends Server
         if (isset($request->header['if-modified-since']) && $request->header['if-modified-since'] == $lastModified) {
             $response->status(304);
             $response->end('');
-            return Marco::SEND_FILE_304;
+            return Macro::SEND_FILE_304;
         }
 
         $normalHeaders = getInstance()->config->get("fileHeader.normal", ['Content-Type: application/octet-stream']);
@@ -421,6 +448,6 @@ abstract class HttpServer extends Server
             });
         }
 
-        return Marco::SEND_FILE_200;
+        return Macro::SEND_FILE_200;
     }
 }

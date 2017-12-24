@@ -217,27 +217,43 @@ class Task
      * @return bool|Exception|\Throwable
      * @throws \Throwable
      */
-    public function handleTaskException(\Throwable $e, $value)
+    public function handleTaskException(\Throwable $userException, $value)
     {
-        if ($this->stack->isEmpty()) {
-            throw $e;
-        }
+        try {
+            if (!empty($this->routine) && $this->routine instanceof \Generator) {
+                $this->routine->throw($userException);
+            }
+        } catch (\Throwable $noCatchUserException) {
+            if ($this->stack->isEmpty()) {
+                try {
+                    throw $noCatchUserException;
+                } catch (\Throwable $noCatch) {
+                    if ($this->controller) {
+                        $this->controller->onExceptionHandle($noCatch);
+                    } else {
+                        throw $noCatch;
+                    }
+                }
 
-        $noCatchException = null;
-        while (!$this->stack->isEmpty()) {
-            $this->routine = $this->stack->pop();
-            try {
-                $this->routine->throw($e);
-                break;
-            } catch (\Throwable $e) {
-                if ($this->stack->isEmpty()) {
-                    $noCatchException = $e;
+                return true;
+            }
+
+            $noCatchException = null;
+            while (!$this->stack->isEmpty()) {
+                $this->routine = $this->stack->pop();
+                try {
+                    $this->routine->throw($noCatchUserException);
+                    break;
+                } catch (\Throwable $e) {
+                    if ($this->stack->isEmpty()) {
+                        $noCatchException = $noCatchUserException;
+                    }
                 }
             }
-        }
 
-        if ($this->stack->isEmpty() && $noCatchException !== null && $this->controller) {
-            $this->controller->onExceptionHandle($noCatchException);
+            if ($this->stack->isEmpty() && $noCatchException !== null && $this->controller) {
+                $this->controller->onExceptionHandle($noCatchException);
+            }
         }
 
         return true;

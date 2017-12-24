@@ -8,7 +8,7 @@
 
 namespace PG\MSF\Base;
 
-use PG\MSF\Marco;
+use PG\MSF\Macro;
 use PG\MSF\Controllers\Controller;
 
 /**
@@ -250,7 +250,7 @@ class Output extends Core
      */
     public function outputView(array $data, $view = null)
     {
-        if ($this->controller->requestType !== Marco::HTTP_REQUEST) {
+        if ($this->controller->requestType !== Macro::HTTP_REQUEST) {
             throw new Exception('$this->outputView not support '. $this->controller->requestType);
         }
 
@@ -260,23 +260,24 @@ class Output extends Core
                 str_replace($this->getConfig()->get('http.method_prefix', 'action'), '', $this->getContext()->getActionName());
         }
 
-        try {
-            $viewFile = ROOT_PATH . '/app/Views/' . $view;
-            $template = getInstance()->templateEngine->make($viewFile);
-            $response = $template->render($data);
-        } catch (\Throwable $e) {
-            $template = null;
-            $viewFile = getInstance()->MSFSrcDir . '/Views/' . $view;
-            try {
-                $template = getInstance()->templateEngine->make($viewFile);
-                $response = $template->render($data);
-            } catch (\Throwable $e) {
-                throw new Exception('app view and server view both not exist, please check again');
-            }
-        }
+        $responseBody = null;
+        $found = false;
+        $engine = getInstance()->templateEngine;
+        $viewResolvePaths = getInstance()->viewResolvePaths;
 
-        $template = null;
-        $this->end($response);
+        foreach ($viewResolvePaths as $basePath) {
+            $template = $engine->setDirectory($basePath)->make($view);
+            if (!$template->exists()) {
+                continue;
+            }
+            $responseBody = $template->render($data);
+            $found = true;
+            break;
+        }
+        if (!$found) {
+            throw new Exception(sprintf('A template named %s was not found in any folder, please check again', $view));
+        }
+        $this->end($responseBody);
     }
 
     /**

@@ -38,7 +38,7 @@ class Core extends Child
     /**
      * @var bool 是否执行构造方法
      */
-    public $__isContruct = false;
+    public $__isConstruct = false;
 
     /**
      * @var bool 销毁标志
@@ -169,6 +169,9 @@ class Core extends Child
                 throw new Exception("config redis_proxy.$proxyName not exits");
             }
             $proxy = RedisProxyFactory::makeProxy($proxyName, $config);
+            if (!$proxy) {
+                throw new Exception('make proxy failed, please check your proxy config.');
+            }
             getInstance()->addRedisProxy($proxyName, $proxy);
         }
 
@@ -220,6 +223,9 @@ class Core extends Child
                 throw new Exception("config mysql_proxy.$proxyName not exits");
             }
             $proxy = MysqlProxyFactory::makeProxy($proxyName, $config);
+            if (!$proxy) {
+                throw new Exception('make proxy failed, please check your proxy config.');
+            }
             getInstance()->addMysqlProxy($proxyName, $proxy);
         }
 
